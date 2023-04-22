@@ -1,0 +1,89 @@
+import sys
+import pandas as pd
+import requests
+from tqdm import tqdm
+from xlsxwriter.workbook import Workbook
+import PySimpleGUI as sg
+import os
+
+# Define the PySimpleGUI layout
+layout = [
+    [sg.Text('Excel File:')],
+    [sg.Input(key='input_file'), sg.FileBrowse()],
+    [sg.Button('Check URLs'), sg.Cancel()],
+]
+
+# Add the progress bar and percentage text to the layout
+progress_layout = [
+    [sg.ProgressBar(100, orientation='h', size=(20, 20), key='progressbar')],
+    [sg.Text('0%', size=(5, 1), key='percent')],
+    [sg.Text('Output file:', size=(10,1)), sg.Text('', size=(50,1), key='output_file')],
+]
+
+layout += progress_layout  # Combine the two layouts
+
+# Create the PySimpleGUI window
+window = sg.Window('URL Checker', layout)
+
+# Define the function to check URLs and update the progress bar
+def check_urls_and_update_progress(urls):
+    num_urls = len(urls)
+    for i, url in enumerate(tqdm(urls)):
+        response = requests.get(url)
+        statuses.append(response.status_code)
+        percent_complete = int((i + 1) / num_urls * 100)
+        window['percent'].update(f'{percent_complete}%')
+        window['progressbar'].update(percent_complete)
+
+# Define the function to write the results to an Excel file
+def write_to_excel(sorted_urls, output_file):
+    with Workbook(output_file) as workbook:
+        worksheet = workbook.add_worksheet()
+
+        # Add column headers
+        worksheet.write('A1', 'URL')
+        worksheet.write('B1', 'Status Code')
+
+        # Add the URLs and their statuses
+        for i, (url, status) in enumerate(sorted_urls):
+            row = i + 1
+            worksheet.write(f'A{row+1}', url)
+            worksheet.write(f'B{row+1}', status)
+
+    return os.path.abspath(output_file)
+
+# Start the PySimpleGUI event loop
+while True:
+    event, values = window.read()
+    if event in (None, 'Cancel'):
+        break
+    elif event == 'Check URLs':
+        input_file = values['input_file']
+        output_file = 'results.xlsx'
+        excel_file = pd.ExcelFile(input_file)
+        urls = []
+        statuses = []
+
+        # Loop through each sheet and cell to extract the URLs
+        for sheet_name in excel_file.sheet_names:
+            sheet = excel_file.parse(sheet_name)
+            for i, row in sheet.iterrows():
+                for cell in row:
+                    if isinstance(cell, str) and cell.startswith('http'):
+                        urls.append(cell)
+
+        # Send a GET request to each URL to check its status code
+        check_urls_and_update_progress(urls)
+
+        # Sort the URLs and their statuses based on status codes
+        zipped = list(zip(urls, statuses))
+        sorted_urls = sorted(zipped, key=lambda x: x[1])
+        sorted_urls = sorted_urls[::-1]
+        sorted_urls = [(url, status) for url, status in sorted_urls if status == 404] + [(url, status) for url, status in sorted_urls if status != 404]
+
+        # Write the sorted URLs and their statuses to an Excel file
+        output_file = write_to_excel(sorted_urls, output_file)
+        window['output_file'].update(output_file, text_color='blue')
+
+# Close the PySimpleGUI window
+window.close()
